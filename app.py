@@ -5,25 +5,26 @@ import re
 import pandas as pd
 from io import BytesIO
 
-st.set_page_config(page_title="KAFBOC Precision Miner", layout="wide")
-st.title("📂 KAFBOC Professional Resume Parser")
+st.set_page_config(page_title="KAFBOC Ultra-Miner", layout="wide")
+st.title("📂 KAFBOC AI Data Extractor (Master Build)")
 
-def get_real_name(text):
-    # 1. Spacing fix (A B D U L -> ABDUL)
+def master_clean_name(text):
+    # 1. Spacing Fix (A B D U L -> ABDUL)
     text = re.sub(r'(?<=\b[A-Z])\s(?=[A-Z]\b)', '', text)
     
-    # Ye woh keywords hain jo aapki screenshots mein ghalti kar rahe hain
-    exclusion_list = [
+    # Woh keywords jo Name column ko kharab kar rahe hain (Based on your screenshots)
+    blacklist = [
         'karachi', 'pakistan', 'lahore', 'education', 'skills', 'experience', 
         'summary', 'profile', 'contact', 'address', 'about', 'communications', 
         'closing', 'reporting', 'modeling', 'accounting', 'certified', 'associate', 
         'manager', 'accountant', 'linkedin', 'email', 'phone', 'mobile', 'resume', 
         'curriculum', 'page', 'objective', 'hobbies', 'projects', 'mehmoodabad', 
         'clifton', 'gulshan', 'street', 'house', 'flat', 'no.', 'sector', 'block',
-        'competencies', 'bookkeeper', 'qualified', 'expert', 'remote', 'office'
+        'competencies', 'bookkeeper', 'qualified', 'expert', 'remote', 'office',
+        'financial', 'international', 'markets', 'serving', 'focused', 'association'
     ]
 
-    # Shuru ki 15-20 lines scan karein
+    # Shuru ki 15-20 lines uthayen
     lines = [l.strip() for l in text.split('\n') if l.strip()][:20]
     
     for line in lines:
@@ -31,33 +32,23 @@ def get_real_name(text):
         low_line = cleaned.lower()
         
         # Validation Rules:
-        # A. Numbers, @, ya http ho to reject
-        if any(char.isdigit() for char in cleaned) or "@" in low_line or "http" in low_line:
-            continue
-            
-        # B. Words Count (Names usually have 2 to 3 words)
+        # A. Numbers bilkul na hon (Jo phone numbers aa rahe thay wo yahan se ruk jayenge)
+        if any(char.isdigit() for char in cleaned): continue
+        
+        # B. URL, Email, ya Bullets (•) na hon
+        if any(x in low_line for x in ['http', '@', '.com', '•', '|', '/']): continue
+        
+        # C. Blacklist check (Communications, Reporting wagera yahan se rukenge)
+        if any(bad in low_line for bad in blacklist): continue
+        
+        # D. Name Pattern (2 to 4 words, length 3 to 35)
         words = cleaned.split()
-        if not (2 <= len(words) <= 4):
-            continue
-            
-        # C. Keyword Rejection (Sabse zaroori step)
-        if any(bad_word in low_line for bad_word in exclusion_list):
-            continue
-            
-        # D. Sentence Rejection (Agar lamba sentence hai to wo naam nahi hai)
-        if len(cleaned) > 35:
-            continue
-            
-        # E. Special Character Rejection (e.g. bullets ya symbols)
-        if re.search(r'[•\*\-\|\/]', cleaned):
-            continue
-
-        # Agar saari checks pass ho jayein, to yehi Name hai
-        return cleaned.title()
+        if 2 <= len(words) <= 4 and 3 <= len(cleaned) <= 35:
+            return cleaned.title() # Format: Muhammad Bilal
                         
-    return "Check Manually"
+    return "Check Document"
 
-def process_file(uploaded_file):
+def extract_data(uploaded_file):
     text = ""
     f_name = uploaded_file.name
     try:
@@ -69,39 +60,36 @@ def process_file(uploaded_file):
             text = "\n".join([para.text for para in doc.paragraphs])
         
         # Email Extraction
-        email_matches = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
+        email = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
         
         return {
             "File Name": f_name,
-            "Name": get_real_name(text),
-            "Email": email_matches[0] if email_matches else "Not Found"
+            "Name": master_clean_name(text),
+            "Email": email[0] if email else "Not Found"
         }
     except:
         return {"File Name": f_name, "Name": "Error", "Email": "Error"}
 
-# --- UI Interface ---
-files = st.file_uploader("Upload Resumes (Multiple Selection)", accept_multiple_files=True)
+# --- UI Layout ---
+files = st.file_uploader("Upload Resumes", accept_multiple_files=True)
 
 if files:
-    with st.spinner('KAFBOC System is filtering documents...'):
-        data = [process_file(f) for f in files]
-        df = pd.DataFrame(data)
+    with st.spinner('KAFBOC System is cleaning data...'):
+        results = [extract_data(f) for f in files]
+        df = pd.DataFrame(results)
     
-    st.subheader("📋 Final Extracted Result")
-    st.dataframe(df, use_container_width=True)
+    st.subheader("📋 Extraction Result")
+    st.dataframe(df, use_container_width=True) # Saaf suthra table view
     
-    # Excel Download formatting
+    # Excel Download
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Data')
         workbook = writer.book
         worksheet = writer.sheets['Data']
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#1F4E78', 'font_color': 'white', 'border': 1})
-        for i, val in enumerate(df.columns):
-            worksheet.write(0, i, val, header_fmt)
+        for i, col in enumerate(df.columns):
+            worksheet.write(0, i, col, header_fmt)
         worksheet.set_column('A:C', 35)
 
-    st.download_button("📥 Download Excel File", output.getvalue(), "KAFBOC_Final_Report.xlsx")
-
-st.divider()
-st.caption("KAFBOC Tech Services - Accuracy First")
+    st.download_button("📥 Download Final Excel", output.getvalue(), "KAFBOC_Final.xlsx")
