@@ -3,77 +3,85 @@ import fitz  # PyMuPDF
 import docx
 import re
 import pandas as pd
+from io import BytesIO
 
-# Page setup
+# Page Configuration
 st.set_page_config(page_title="KAFBOC Data Miner", layout="wide")
 
 st.title("📂 KAFBOC Professional Data Extractor")
-st.markdown("---")
+st.info("System optimized for Excel (.xlsx) output.")
 
-def clean_extracted_name(text):
-    # Headers aur irrelevant words ko filter karne ke liye
-    garbage_keywords = ['contact', 'education', 'experience', 'summary', 'profile', 'address', 'phone', 'mobile', 'resume', 'cv']
-    
-    lines = [l.strip() for l in text.split('\n') if l.strip()]
-    
-    for line in lines:
-        # Check 1: Line bahut lambi na ho (aksar paragraph hota hai)
-        if len(line) > 40: continue
-        
-        # Check 2: Email ya numbers na hon
-        if "@" in line or any(char.isdigit() for char in line[:5]): continue
-        
-        # Check 3: Garbage keywords na hon
-        if any(k in line.lower() for k in garbage_keywords): continue
-        
-        # Agar saari checks pass ho jayein, to yehi Name hai
-        if len(line) > 2:
-            return line
-            
-    return "Not Found"
+def clean_spaces(text):
+    text = re.sub(r'(?<=\b[A-Z])\s(?=[A-Z]\b)', '', text) 
+    return " ".join(text.split())
+
+def is_valid_name(line):
+    block_list = [
+        'contact', 'education', 'experience', 'summary', 'profile', 'address', 
+        'phone', 'mobile', 'resume', 'cv', 'competencies', 'skills', 'about', 
+        'karachi', 'pakistan', 'linkedin', 'page', 'university', 'accountant'
+    ]
+    line_lower = line.lower()
+    if any(word in line_lower for word in block_list): return False
+    if re.search(r'[0-9]{5,}', line): return False 
+    if len(line) < 3 or len(line) > 35: return False
+    return True
 
 def extract_info(uploaded_file):
     text = ""
     file_name = uploaded_file.name
-    
     try:
         if file_name.endswith('.pdf'):
             bytes_data = uploaded_file.read()
             doc = fitz.open(stream=bytes_data, filetype="pdf")
-            for page in doc:
-                text += page.get_text()
+            text = "".join([page.get_text() for page in doc])
         elif file_name.endswith('.docx'):
             doc = docx.Document(uploaded_file)
             text = "\n".join([para.text for para in doc.paragraphs])
         
-        # FIXED Email Regex (Error khatam karne ke liye)
         email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
         emails = re.findall(email_pattern, text)
         
-        return {
-            "File Name": file_name,
-            "Name": clean_extracted_name(text),
-            "Email": emails[0] if emails else "Not Found"
-        }
-    except Exception as e:
-        return {"File Name": file_name, "Name": "Error", "Email": "Processing Failed"}
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        found_name = "Not Found"
+        for line in lines:
+            cleaned = clean_spaces(line)
+            if is_valid_name(cleaned):
+                found_name = cleaned.title()
+                break
+        
+        return {"File Name": file_name, "Name": found_name, "Email": emails[0] if emails else "Not Found"}
+    except Exception:
+        return {"File Name": file_name, "Name": "Error", "Email": "Failed"}
 
 # --- UI Interface ---
-uploaded_files = st.file_uploader("Apni Files Upload Karein", accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload Resumes (PDF/Word)", accept_multiple_files=True)
 
 if uploaded_files:
-    all_data = []
-    for f in uploaded_files:
-        data = extract_info(f)
-        all_data.append(data)
+    results = [extract_info(f) for f in uploaded_files]
+    df = pd.DataFrame(results)
     
-    df = pd.DataFrame(all_data)
-    
-    st.write("### Extraction Results")
+    st.subheader("📋 Extracted Data Table")
     st.dataframe(df, use_container_width=True)
     
-    # Excel format (CSV) download
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Result", data=csv, file_name="KAFBOC_Data.csv", mime="text/csv")
+    # --- EXCEL DOWNLOAD LOGIC ---
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
+        # Formatting (Alignment theek karne ke liye)
+        workbook = writer.book
+        worksheet = writer.sheets['Sheet1']
+        format_left = workbook.add_format({'align': 'left'})
+        worksheet.set_column('A:C', 30, format_left)
+    
+    processed_data = output.getvalue()
 
-st.caption("KAFBOC Tech Services - Secure & Private")
+    st.download_button(
+        label="📥 Download as Excel (.xlsx)",
+        data=processed_data,
+        file_name="KAFBOC_Data_Report.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+st.divider()
+st.caption("Developed by Muhammad Bilal | KAFBOC Tech")
