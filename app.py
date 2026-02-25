@@ -5,66 +5,52 @@ import re
 import pandas as pd
 from io import BytesIO
 
-st.set_page_config(page_title="KAFBOC Precision Miner", layout="wide")
-st.title("📂 KAFBOC Professional Resume Parser")
+st.set_page_config(page_title="KAFBOC Advanced Miner", layout="wide")
+st.title("📂 KAFBOC Professional Data Extractor (Master Build)")
 
-def get_best_name_candidate(text):
+def master_name_validator(text):
     # 1. Spacing fix (A B D U L -> ABDUL)
     text = re.sub(r'(?<=\b[A-Z])\s(?=[A-Z]\b)', '', text)
     
-    # Blocklist: In alfaz ko Name column mein nahi aana chahiye
+    # Woh keywords jo aapki screenshots mein ghalti kar rahe hain (Strict Blocklist)
     blocklist = [
         'karachi', 'pakistan', 'lahore', 'education', 'skills', 'experience', 
         'summary', 'profile', 'contact', 'address', 'about', 'communications', 
         'closing', 'reporting', 'modeling', 'accounting', 'certified', 'associate', 
         'manager', 'accountant', 'linkedin', 'email', 'phone', 'mobile', 'resume', 
         'cv', 'page', 'objective', 'hobbies', 'projects', 'mehmoodabad', 'expert',
-        'having', 'international', 'focused', 'professional', 'senior', 'bookkeeper'
+        'having', 'international', 'focused', 'professional', 'senior', 'bookkeeper',
+        'key achievements', 'corporate tax', 'cma', 'process', 'management', 'accounts',
+        'receivable', 'strong', 'communication', 'school', 'tabanis', 'accountancy'
     ]
 
+    # Shuru ki 15-20 lines scan karein
     lines = [l.strip() for l in text.split('\n') if l.strip()][:25]
-    best_name = "Not Found"
-    highest_score = -100
-
+    
     for line in lines:
         cleaned = " ".join(line.split())
         low_line = cleaned.lower()
-        current_score = 0
         
-        # --- SCORE CALCULATION ---
-        # A. Numbers, @, ya special symbols hon to score boht kam kar do
-        if any(char.isdigit() for char in cleaned) or "@" in low_line or "•" in cleaned:
-            current_score -= 200
-            
-        # B. Words Count: Names usually have 2 or 3 words (Muhammad Bilal)
+        # Validation Rules:
+        # A. Agar line mein numbers hain (Phone No) to reject
+        if any(char.isdigit() for char in cleaned): continue
+        
+        # B. Agar line blocklist mein hai to reject
+        if any(bad in low_line for bad in blocklist): continue
+        
+        # C. Agar lamba sentence hai (More than 35 chars) to reject
+        if len(cleaned) > 35: continue
+        
+        # D. Name Pattern (Resumes mein naam aksar 2 se 3 words ka hota hai)
         words = cleaned.split()
-        if 2 <= len(words) <= 3:
-            current_score += 50
-        elif len(words) == 1:
-            current_score -= 20 # Single words like "Education" get penalty
-            
-        # C. Keyword Penalty: Agar blocklist ka lafz ho to seedha reject
-        if any(bad in low_line for bad in blocklist):
-            current_score -= 150
-            
-        # D. Case Sensitivity: All CAPS names are common in resumes
-        if cleaned.isupper() and len(cleaned) > 5:
-            current_score += 20
-            
-        # E. Length Check: Ideal name length 5 to 30 chars
-        if 5 <= len(cleaned) <= 30:
-            current_score += 30
-        else:
-            current_score -= 50
-
-        # --- HIGHEST SCORE SELECTION ---
-        if current_score > highest_score:
-            highest_score = current_score
-            best_name = cleaned.title()
+        if 2 <= len(words) <= 4:
+            # Check for special characters like / , - etc
+            if not re.search(r'[/\\|•\*\(\)]', cleaned):
+                return cleaned.title()
                         
-    return best_name if highest_score > 10 else "Check Document"
+    return "Check Document"
 
-def process_file(uploaded_file):
+def process_resume(uploaded_file):
     text = ""
     f_name = uploaded_file.name
     try:
@@ -75,26 +61,24 @@ def process_file(uploaded_file):
             doc = docx.Document(uploaded_file)
             text = "\n".join([para.text for para in doc.paragraphs])
         
-        # Email Extraction
-        email_matches = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
-        
+        email = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
         return {
             "File Name": f_name,
-            "Name": get_best_name_candidate(text),
-            "Email": email_matches[0] if email_matches else "Not Found"
+            "Name": master_name_validator(text),
+            "Email": email[0] if email else "Not Found"
         }
     except:
         return {"File Name": f_name, "Name": "Error", "Email": "Error"}
 
 # --- UI Interface ---
-files = st.file_uploader("Upload Resumes (Multiple Selection)", accept_multiple_files=True)
+files = st.file_uploader("Upload Resumes (PDF/Word)", accept_multiple_files=True)
 
 if files:
-    with st.spinner('KAFBOC System is refining data...'):
-        data = [process_file(f) for f in files]
+    with st.spinner('KAFBOC System is refining your data...'):
+        data = [process_resume(f) for f in files]
         df = pd.DataFrame(data)
     
-    st.subheader("📋 Extraction Result")
+    st.subheader("📋 Final Cleaned Report")
     st.dataframe(df, use_container_width=True)
     
     # Excel Download
@@ -108,4 +92,4 @@ if files:
             worksheet.write(0, i, val, header_fmt)
         worksheet.set_column('A:C', 35)
 
-    st.download_button("📥 Download Excel Report", output.getvalue(), "KAFBOC_Final.xlsx")
+    st.download_button("📥 Download Professional Excel Report", output.getvalue(), "KAFBOC_Final.xlsx")
