@@ -1,95 +1,106 @@
 import streamlit as st
-import fitz  # PyMuPDF
+import fitz
 import docx
 import re
 import pandas as pd
 import spacy
 from io import BytesIO
 
-# NLP Model Load karna
-try:
-    nlp = spacy.load("en_core_web_sm")
-except:
-    st.error("NLP Model load nahi ho saka. Requirements file check karein.")
+# AI Model Load
+@st.cache_resource
+def load_nlp():
+    try:
+        return spacy.load("en_core_web_sm")
+    except:
+        return None
 
-st.set_page_config(page_title="KAFBOC Smart Miner", layout="wide")
-st.title("📂 KAFBOC AI Data Extractor (v3.0)")
+nlp = load_nlp()
 
-def advanced_clean_name(text):
-    # 1. Ghair zaroori spaces theek karna (A B D U L -> ABDUL)
+st.set_page_config(page_title="KAFBOC AI Miner v4", layout="wide")
+st.title("📂 KAFBOC Ultra-Smart Data Extractor")
+
+def deep_clean_name(text):
+    # 1. Spacing Fix (A B D U L -> ABDUL)
     text = re.sub(r'(?<=\b[A-Z])\s(?=[A-Z]\b)', '', text)
     
-    # 2. NLP se Name dhoondna
-    doc = nlp(text[:1000]) # Shuru ke 1000 characters kafi hain
-    names = [ent.text for ent in doc.ents if ent.label_ == "PERSON"]
-    
-    # Block list (Jo cheezain name nahi ho saktin)
-    block_list = ['karachi', 'pakistan', 'resume', 'curriculum', 'education', 'skills', 'experience', 'contact']
-    
-    for n in names:
-        n_clean = " ".join(n.split())
-        # Filter: Agar name boht chota/bada ho ya block list mein ho to skip karein
-        if 3 < len(n_clean) < 30 and not any(b in n_clean.lower() for b in block_list):
-            if not any(char.isdigit() for char in n_clean): # Phone number filter
-                return n_clean.title()
-                
-    # Fallback: Agar NLP fail ho jaye to purana saf sutra logic
-    lines = [l.strip() for l in text.split('\n') if l.strip()][:10]
-    for line in lines:
-        cleaned = " ".join(line.split())
-        if 3 < len(cleaned) < 30 and not any(b in cleaned.lower() for b in block_list):
-            if not any(char.isdigit() for char in cleaned):
-                return cleaned.title()
-                
-    return "Not Found"
+    # 2. AI Entity Extraction
+    if nlp:
+        doc = nlp(text[:1500]) # First 1500 chars focus
+        # Sirf wahi entities uthayen jo 'PERSON' hon
+        candidate_names = [ent.text.strip() for ent in doc.ents if ent.label_ == "PERSON"]
+        
+        # Skill/Heading Blocklist (Aapki screenshot ke mutabiq)
+        block_list = [
+            'communications', 'closing', 'reporting', 'modeling', 'accounting',
+            'contact', 'education', 'skills', 'experience', 'summary', 'profile',
+            'karachi', 'pakistan', 'lahore', 'certified', 'chartered', 'curriculum',
+            'university', 'association', 'about', 'linkedin', 'professional'
+        ]
 
-def extract_info(uploaded_file):
+        for name in candidate_names:
+            # Clean extra spaces inside name
+            clean_n = " ".join(name.split())
+            name_low = clean_n.lower()
+            
+            # Validation Checks
+            if 3 < len(clean_n) < 30:
+                if not any(word in name_low for word in block_list):
+                    if not any(char.isdigit() for char in clean_n):
+                        # Name mein kam se kam ek space honi chahiye (First & Last Name)
+                        if " " in clean_n:
+                            return clean_n.title()
+    
+    # 3. Fallback (Agar AI fail ho jaye)
+    lines = [l.strip() for l in text.split('\n') if l.strip()][:15]
+    for line in lines:
+        if len(line) < 30 and " " in line and not any(char.isdigit() for char in line):
+            if not any(w in line.lower() for w in ['resume', 'cv', 'email', 'phone']):
+                return line.title()
+                
+    return "Check Manual"
+
+def extract_data(uploaded_file):
     text = ""
-    file_name = uploaded_file.name
+    f_name = uploaded_file.name
     try:
-        if file_name.endswith('.pdf'):
-            bytes_data = uploaded_file.read()
-            doc = fitz.open(stream=bytes_data, filetype="pdf")
-            text = "".join([page.get_text() for page in doc])
-        elif file_name.endswith('.docx'):
+        if f_name.endswith('.pdf'):
+            with fitz.open(stream=uploaded_file.read(), filetype="pdf") as doc:
+                text = "".join([page.get_text() for page in doc])
+        elif f_name.endswith('.docx'):
             doc = docx.Document(uploaded_file)
             text = "\n".join([para.text for para in doc.paragraphs])
         
-        # Robust Email Pattern
-        email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-        emails = re.findall(email_pattern, text)
-        
+        email = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
         return {
-            "File Name": file_name,
-            "Name": advanced_clean_name(text),
-            "Email": emails[0] if emails else "Not Found"
+            "File Name": f_name,
+            "Name": deep_clean_name(text),
+            "Email": email[0] if email else "Not Found"
         }
     except:
-        return {"File Name": file_name, "Name": "Error", "Email": "Failed"}
+        return {"File Name": f_name, "Name": "Error", "Email": "Error"}
 
 # --- UI ---
-uploaded_files = st.file_uploader("Upload PDF/Word Files", accept_multiple_files=True)
+files = st.file_uploader("Upload Resumes", accept_multiple_files=True)
 
-if uploaded_files:
-    results = [extract_info(f) for f in uploaded_files]
-    df = pd.DataFrame(results)
+if files:
+    with st.spinner('AI is analyzing documents...'):
+        data = [extract_data(f) for f in files]
+        df = pd.DataFrame(data)
     
-    st.subheader("📋 Final Clean Data")
-    st.table(df) # Table view zada saaf hoti hai
+    st.success("Analysis Complete!")
+    st.table(df) # Proper alignment ke liye table behtar hai
     
-    # Excel Export
+    # Professional Excel Export
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Data')
+        df.to_excel(writer, index=False, sheet_name='KAFBOC_Data')
         workbook = writer.book
-        worksheet = writer.sheets['Data']
-        header_format = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1})
+        worksheet = writer.sheets['KAFBOC_Data']
+        
+        # Header Styling
+        fmt = workbook.add_format({'bold': True, 'bg_color': '#1f4e78', 'font_color': 'white', 'border': 1})
         for col_num, value in enumerate(df.columns.values):
-            worksheet.write(0, col_num, value, header_format)
-    
-    st.download_button(
-        label="📥 Download Professional Excel",
-        data=output.getvalue(),
-        file_name="KAFBOC_Final_Report.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+            worksheet.write(0, col_num, value, fmt)
+        worksheet.set_column('A:C', 35)
+
+    st.download_button("📥 Download Final Excel Report", output.getvalue(), "KAFBOC_Final.xlsx")
