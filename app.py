@@ -6,14 +6,13 @@ import pandas as pd
 from io import BytesIO
 
 st.set_page_config(page_title="KAFBOC Precision Miner", layout="wide")
-st.title("📂 KAFBOC Professional Data Extractor (V9.0)")
+st.title("📂 KAFBOC Professional Data Extractor (Master Build)")
 
-def strict_name_cleaner(text):
+def strict_name_validator(text):
     # 1. Spacing fix (A B D U L -> ABDUL)
     text = re.sub(r'(?<=\b[A-Z])\s(?=[A-Z]\b)', '', text)
     
-    # Woh keywords jo aapki screenshots mein ghalti kar rahe hain
-    # Inhe hum sakhti se block karenge
+    # Woh keywords jo Name column ko kharab kar rahe hain (Strict Blocklist)
     blocklist = [
         'karachi', 'pakistan', 'lahore', 'education', 'skills', 'experience', 
         'summary', 'profile', 'contact', 'address', 'about', 'communications', 
@@ -32,7 +31,7 @@ def strict_name_cleaner(text):
         cleaned = " ".join(line.split())
         low_line = cleaned.lower()
         
-        # A. Numbers bilkul nahi hone chahiye (Phone numbers filter)
+        # A. Numbers bilkul nahi hone chahiye (Phone No filter)
         if any(char.isdigit() for char in cleaned): continue
         
         # B. Blocklist check (Headings aur Titles filter)
@@ -42,13 +41,13 @@ def strict_name_cleaner(text):
         words = cleaned.split()
         if len(words) < 2 or len(words) > 4: continue
         
-        # D. Length check
+        # D. Length check (Bohat lamba sentence naam nahi ho sakta)
         if len(cleaned) > 35: continue
 
         # Agar saari checks pass ho jayein, to yehi Name hai
         return cleaned.title()
                         
-    return "Not Found"
+    return "Check Document"
 
 def process_resume(uploaded_file):
     text = ""
@@ -73,17 +72,17 @@ def process_resume(uploaded_file):
         return {"File Name": f_name, "Name": "Error", "Email": "Error"}
 
 # --- UI Interface ---
-files = st.file_uploader("Upload Files", accept_multiple_files=True)
+files = st.file_uploader("Upload Files (PDF/Word)", accept_multiple_files=True)
 
 if files:
-    with st.spinner('KAFBOC AI is cleaning your data...'):
+    with st.spinner('KAFBOC AI is refining your data...'):
         data = [process_resume(f) for f in files]
         df = pd.DataFrame(data)
     
     st.success("Clean Data Prepared!")
-    st.table(df) # Proper Table alignment
+    st.table(df) # Proper Table alignment for clear view
     
-    # Excel formatting
+    # Excel formatting for Professional Presentation
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Data')
