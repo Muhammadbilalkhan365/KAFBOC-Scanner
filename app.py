@@ -3,49 +3,66 @@ import fitz
 import docx
 import re
 import pandas as pd
+import spacy
 from io import BytesIO
 
-st.set_page_config(page_title="KAFBOC Ultra-Miner", layout="wide")
-st.title("📂 KAFBOC AI Data Extractor (Master Build)")
+# AI Model Load with caching
+@st.cache_resource
+def load_nlp():
+    try:
+        return spacy.load("en_core_web_sm")
+    except:
+        return None
 
-def master_clean_name(text):
-    # 1. Spacing Fix (A B D U L -> ABDUL)
+nlp = load_nlp()
+
+st.set_page_config(page_title="KAFBOC Smart Miner", layout="wide")
+st.title("📂 KAFBOC AI Precision Data Extractor")
+
+def get_smart_name(text):
+    # 1. Spacing fix (A B D U L -> ABDUL)
     text = re.sub(r'(?<=\b[A-Z])\s(?=[A-Z]\b)', '', text)
     
-    # Woh keywords jo Name column ko kharab kar rahe hain (Based on your screenshots)
-    blacklist = [
-        'karachi', 'pakistan', 'lahore', 'education', 'skills', 'experience', 
-        'summary', 'profile', 'contact', 'address', 'about', 'communications', 
-        'closing', 'reporting', 'modeling', 'accounting', 'certified', 'associate', 
-        'manager', 'accountant', 'linkedin', 'email', 'phone', 'mobile', 'resume', 
-        'curriculum', 'page', 'objective', 'hobbies', 'projects', 'mehmoodabad', 
-        'clifton', 'gulshan', 'street', 'house', 'flat', 'no.', 'sector', 'block',
-        'competencies', 'bookkeeper', 'qualified', 'expert', 'remote', 'office',
-        'financial', 'international', 'markets', 'serving', 'focused', 'association'
+    # 2. Blocklist (In alfaz wali lines ko reject karein)
+    blocklist = [
+        'karachi', 'pakistan', 'education', 'skills', 'experience', 'summary', 
+        'profile', 'contact', 'address', 'about', 'communications', 'closing', 
+        'reporting', 'modeling', 'accounting', 'certified', 'associate', 'manager', 
+        'accountant', 'linkedin', 'email', 'phone', 'mobile', 'resume', 'cv', 
+        'page', 'objective', 'hobbies', 'projects', 'mehmoodabad', 'expert'
     ]
 
-    # Shuru ki 15-20 lines uthayen
-    lines = [l.strip() for l in text.split('\n') if l.strip()][:20]
-    
+    lines = [l.strip() for l in text.split('\n') if l.strip()][:25]
+    candidates = []
+
+    if nlp:
+        doc = nlp("\n".join(lines))
+        # AI se dhoondein ke "Person" kahan hai
+        for ent in doc.ents:
+            if ent.label_ == "PERSON":
+                name = " ".join(ent.text.split())
+                # Scorer Logic
+                score = 0
+                if 2 <= len(name.split()) <= 3: score += 50
+                if name.isupper(): score += 10
+                if not any(b in name.lower() for b in blocklist): score += 40
+                if not any(char.isdigit() for char in name): score += 20
+                
+                if score > 60:
+                    candidates.append((name.title(), score))
+
+    # Sort candidates by score
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    if candidates:
+        return candidates[0][0]
+
+    # Fallback: Agar AI fail ho jaye
     for line in lines:
         cleaned = " ".join(line.split())
-        low_line = cleaned.lower()
-        
-        # Validation Rules:
-        # A. Numbers bilkul na hon (Jo phone numbers aa rahe thay wo yahan se ruk jayenge)
-        if any(char.isdigit() for char in cleaned): continue
-        
-        # B. URL, Email, ya Bullets (•) na hon
-        if any(x in low_line for x in ['http', '@', '.com', '•', '|', '/']): continue
-        
-        # C. Blacklist check (Communications, Reporting wagera yahan se rukenge)
-        if any(bad in low_line for bad in blacklist): continue
-        
-        # D. Name Pattern (2 to 4 words, length 3 to 35)
-        words = cleaned.split()
-        if 2 <= len(words) <= 4 and 3 <= len(cleaned) <= 35:
-            return cleaned.title() # Format: Muhammad Bilal
-                        
+        if 2 <= len(cleaned.split()) <= 3 and not any(char.isdigit() for char in cleaned):
+            if not any(b in cleaned.lower() for b in blocklist) and len(cleaned) < 30:
+                return cleaned.title()
+                
     return "Check Document"
 
 def extract_data(uploaded_file):
@@ -59,27 +76,25 @@ def extract_data(uploaded_file):
             doc = docx.Document(uploaded_file)
             text = "\n".join([para.text for para in doc.paragraphs])
         
-        # Email Extraction
         email = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
-        
         return {
             "File Name": f_name,
-            "Name": master_clean_name(text),
+            "Name": get_smart_name(text),
             "Email": email[0] if email else "Not Found"
         }
     except:
         return {"File Name": f_name, "Name": "Error", "Email": "Error"}
 
 # --- UI Layout ---
-files = st.file_uploader("Upload Resumes", accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload Resumes", accept_multiple_files=True)
 
-if files:
-    with st.spinner('KAFBOC System is cleaning data...'):
-        results = [extract_data(f) for f in files]
+if uploaded_files:
+    with st.spinner('KAFBOC AI is analyzing documents...'):
+        results = [extract_data(f) for f in uploaded_files]
         df = pd.DataFrame(results)
     
-    st.subheader("📋 Extraction Result")
-    st.dataframe(df, use_container_width=True) # Saaf suthra table view
+    st.subheader("📋 Final Clean Data")
+    st.dataframe(df, use_container_width=True) # Dataframe view
     
     # Excel Download
     output = BytesIO()
@@ -87,9 +102,9 @@ if files:
         df.to_excel(writer, index=False, sheet_name='Data')
         workbook = writer.book
         worksheet = writer.sheets['Data']
-        header_fmt = workbook.add_format({'bold': True, 'bg_color': '#1F4E78', 'font_color': 'white', 'border': 1})
+        header_fmt = workbook.add_format({'bold': True, 'bg_color': '#1F4E78', 'font_color': 'white'})
         for i, col in enumerate(df.columns):
             worksheet.write(0, i, col, header_fmt)
         worksheet.set_column('A:C', 35)
 
-    st.download_button("📥 Download Final Excel", output.getvalue(), "KAFBOC_Final.xlsx")
+    st.download_button("📥 Download Excel Report", output.getvalue(), "KAFBOC_Final_Report.xlsx")
