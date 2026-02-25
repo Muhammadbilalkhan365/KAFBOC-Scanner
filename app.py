@@ -11,18 +11,26 @@ st.title("📂 KAFBOC Professional Data Extractor")
 st.markdown("---")
 
 def clean_extracted_name(text):
-    # Be-fizul keywords jo aksar resumes mein pehle aate hain
-    garbage_keywords = ['contact', 'education', 'experience', 'summary', 'profile', 'address', 'phone', 'mobile']
+    # Headers aur irrelevant words ko filter karne ke liye
+    garbage_keywords = ['contact', 'education', 'experience', 'summary', 'profile', 'address', 'phone', 'mobile', 'resume', 'cv']
     
     lines = [l.strip() for l in text.split('\n') if l.strip()]
     
     for line in lines:
-        # Check karein ke line mein email, digits ya garbage keywords na hon
-        if "@" not in line and not any(k in line.lower() for k in garbage_keywords) and len(line) > 2:
-            # Agar line mein sirf numbers hain (jaise phone number), to skip karein
-            if not re.match(r'^[0-9+-\s]+$', line):
-                return line
-    return "N/A"
+        # Check 1: Line bahut lambi na ho (aksar paragraph hota hai)
+        if len(line) > 40: continue
+        
+        # Check 2: Email ya numbers na hon
+        if "@" in line or any(char.isdigit() for char in line[:5]): continue
+        
+        # Check 3: Garbage keywords na hon
+        if any(k in line.lower() for k in garbage_keywords): continue
+        
+        # Agar saari checks pass ho jayein, to yehi Name hai
+        if len(line) > 2:
+            return line
+            
+    return "Not Found"
 
 def extract_info(uploaded_file):
     text = ""
@@ -38,7 +46,7 @@ def extract_info(uploaded_file):
             doc = docx.Document(uploaded_file)
             text = "\n".join([para.text for para in doc.paragraphs])
         
-        # Email Extraction
+        # FIXED Email Regex (Error khatam karne ke liye)
         email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
         emails = re.findall(email_pattern, text)
         
@@ -48,33 +56,24 @@ def extract_info(uploaded_file):
             "Email": emails[0] if emails else "Not Found"
         }
     except Exception as e:
-        return {"File Name": file_name, "Name": "Error", "Email": str(e)}
+        return {"File Name": file_name, "Name": "Error", "Email": "Processing Failed"}
 
-# UI Layout
-uploaded_files = st.file_uploader("Apni PDF ya Word files yahan upload karein:", accept_multiple_files=True)
+# --- UI Interface ---
+uploaded_files = st.file_uploader("Apni Files Upload Karein", accept_multiple_files=True)
 
 if uploaded_files:
     all_data = []
-    progress_bar = st.progress(0)
-    
-    for i, f in enumerate(uploaded_files):
+    for f in uploaded_files:
         data = extract_info(f)
         all_data.append(data)
-        progress_bar.progress((i + 1) / len(uploaded_files))
     
     df = pd.DataFrame(all_data)
     
-    st.success(f"{len(uploaded_files)} Files process ho gayi hain!")
+    st.write("### Extraction Results")
     st.dataframe(df, use_container_width=True)
     
-    # Professional Download Button
+    # Excel format (CSV) download
     csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Download Data as CSV",
-        data=csv,
-        file_name="KAFBOC_Extracted_Data.csv",
-        mime="text/csv",
-    )
+    st.download_button("📥 Download Result", data=csv, file_name="KAFBOC_Data.csv", mime="text/csv")
 
-st.markdown("---")
-st.caption("Developed by Muhammad Bilal | KAFBOC Tech Services")
+st.caption("KAFBOC Tech Services - Secure & Private")
