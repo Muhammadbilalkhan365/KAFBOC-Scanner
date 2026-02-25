@@ -3,54 +3,69 @@ import fitz
 import docx
 import re
 import pandas as pd
+import spacy
 from io import BytesIO
 
-st.set_page_config(page_title="KAFBOC Ultra-Miner", layout="wide")
+# AI Model Load with Cache
+@st.cache_resource
+def load_nlp():
+    try:
+        return spacy.load("en_core_web_sm")
+    except:
+        return None
+
+nlp = load_nlp()
+
+st.set_page_config(page_title="KAFBOC Master AI", layout="wide")
 st.title("📂 KAFBOC AI Data Extractor (Master Build)")
 
-def master_clean_name(text):
+def score_and_get_name(text):
     # 1. Spacing Fix (A B D U L -> ABDUL)
     text = re.sub(r'(?<=\b[A-Z])\s(?=[A-Z]\b)', '', text)
     
-    # Blocklist for Headings, Cities, and Titles
-    illegal_words = {
-        'education', 'experience', 'summary', 'profile', 'skills', 'contact',
-        'karachi', 'pakistan', 'lahore', 'address', 'about', 'communications', 
-        'closing', 'reporting', 'modeling', 'accounting', 'university', 'college', 
-        'certified', 'associate', 'manager', 'accountant', 'linkedin', 'email', 
-        'phone', 'mobile', 'curriculum', 'resume', 'page', 'objective', 'hobbies', 
-        'projects', 'mehmoodabad', 'clifton', 'gulshan', 'north', 'office', 'house',
-        'no.', 'flat', 'street', 'road', 'sector', 'block', 'competencies', 'bookkeeper'
-    }
-
-    # Shuru ki lines uthayen
-    lines = [l.strip() for l in text.split('\n') if l.strip()][:20]
+    if not nlp: return "Model Error"
     
-    for line in lines:
-        # Clean the line
-        cleaned = " ".join(line.split())
-        low_line = cleaned.lower()
-        
-        # Validation Logic:
-        # A. Numbers bilkul na hon
-        if any(char.isdigit() for char in cleaned): continue
-        
-        # B. URL ya Email na ho
-        if any(x in low_line for x in ['http', 'www', '@', '.com', '.pk']): continue
-        
-        # C. Illegal words (Headings/Cities) na hon
-        if any(word in low_line.split() for word in illegal_words): continue
-        
-        # D. Name Pattern (2 to 4 words, not too long)
-        words = cleaned.split()
-        if 2 <= len(words) <= 4 and 3 <= len(cleaned) <= 35:
-            # E. Extra filter: Agar line "Contact" ya "Name:" se shuru ho rahi hai to ignore
-            if not low_line.startswith(('name:', 'contact:', 'residence:')):
-                return cleaned.title()
-                        
-    return "Check Document"
+    # Pooray text ko scan karein magar shuru ke hisse par focus karein
+    doc = nlp(text[:2000])
+    candidates = []
+    
+    # Blocklist for keywords
+    blocklist = ['education', 'experience', 'summary', 'skills', 'contact', 'karachi', 'pakistan', 'university', 'college', 'accountant', 'manager', 'communications', 'modeling', 'reporting']
 
-def extract_data(uploaded_file):
+    for ent in doc.ents:
+        if ent.label_ == "PERSON":
+            name = " ".join(ent.text.split())
+            name_low = name.lower()
+            
+            # Scoring Logic
+            score = 0
+            if 2 <= len(name.split()) <= 3: score += 50  # Name usually has 2-3 words
+            if name.isupper(): score += 10               # Many resumes have names in CAPS
+            if not any(word in name_low for word in blocklist): score += 30
+            if not any(char.isdigit() for char in name): score += 20
+            
+            # Penalties
+            if len(name) < 3 or len(name) > 30: score -= 100
+            if "@" in name or "http" in name: score -= 100
+            
+            candidates.append((name.title(), score))
+    
+    # Sort by highest score
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    
+    if candidates and candidates[0][1] > 50:
+        return candidates[0][0]
+    
+    # Fallback: Agar AI fail ho jaye
+    lines = [l.strip() for l in text.split('\n') if l.strip()][:10]
+    for line in lines:
+        if 2 <= len(line.split()) <= 3 and not any(char.isdigit() for char in line):
+            if not any(w in line.lower() for w in blocklist):
+                return line.title()
+                
+    return "Not Found"
+
+def extract_info(uploaded_file):
     text = ""
     f_name = uploaded_file.name
     try:
@@ -61,40 +76,34 @@ def extract_data(uploaded_file):
             doc = docx.Document(uploaded_file)
             text = "\n".join([para.text for para in doc.paragraphs])
         
-        # Clean formatting
-        text = text.replace('\t', ' ')
-        
-        # Email Extraction
         email = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
-        
         return {
             "File Name": f_name,
-            "Name": master_clean_name(text),
+            "Name": score_and_get_name(text),
             "Email": email[0] if email else "Not Found"
         }
     except:
-        return {"File Name": f_name, "Name": "Processing Error", "Email": "N/A"}
+        return {"File Name": f_name, "Name": "Error", "Email": "Error"}
 
 # --- UI ---
-files = st.file_uploader("Upload Files", accept_multiple_files=True)
+files = st.file_uploader("Upload Resumes", accept_multiple_files=True)
 
 if files:
-    with st.spinner('KAFBOC System is filtering names...'):
-        data = [extract_data(f) for f in files]
-        df = pd.DataFrame(data)
+    with st.spinner('AI is calculating scores for names...'):
+        results = [extract_info(f) for f in files]
+        df = pd.DataFrame(results)
     
-    st.success("Cleaned Result:")
-    st.table(df) # Table view zada clear hoti hai
+    st.table(df)
     
     # Excel Download
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='CleanData')
+        df.to_excel(writer, index=False, sheet_name='KAFBOC_Data')
         workbook = writer.book
-        worksheet = writer.sheets['CleanData']
+        worksheet = writer.sheets['KAFBOC_Data']
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#1F4E78', 'font_color': 'white', 'border': 1})
         for i, col in enumerate(df.columns):
             worksheet.write(0, i, col, header_fmt)
         worksheet.set_column('A:C', 40)
 
-    st.download_button("📥 Download Final Clean Excel", output.getvalue(), "KAFBOC_Master_Data.xlsx")
+    st.download_button("📥 Download AI Scored Excel", output.getvalue(), "KAFBOC_AI_Data.xlsx")
