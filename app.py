@@ -3,69 +3,67 @@ import fitz
 import docx
 import re
 import pandas as pd
-import spacy
 from io import BytesIO
 
-# AI Model Load with Cache
-@st.cache_resource
-def load_nlp():
-    try:
-        return spacy.load("en_core_web_sm")
-    except:
-        return None
+st.set_page_config(page_title="KAFBOC Advanced Miner", layout="wide")
+st.title("📂 KAFBOC AI Data Extractor (Precision Build)")
 
-nlp = load_nlp()
-
-st.set_page_config(page_title="KAFBOC Master AI", layout="wide")
-st.title("📂 KAFBOC AI Data Extractor (Master Build)")
-
-def score_and_get_name(text):
-    # 1. Spacing Fix (A B D U L -> ABDUL)
+def filter_and_get_best_name(text):
+    # 1. Spacing fix (A B D U L -> ABDUL)
     text = re.sub(r'(?<=\b[A-Z])\s(?=[A-Z]\b)', '', text)
     
-    if not nlp: return "Model Error"
-    
-    # Pooray text ko scan karein magar shuru ke hisse par focus karein
-    doc = nlp(text[:2000])
-    candidates = []
-    
-    # Blocklist for keywords
-    blocklist = ['education', 'experience', 'summary', 'skills', 'contact', 'karachi', 'pakistan', 'university', 'college', 'accountant', 'manager', 'communications', 'modeling', 'reporting']
+    # 2. Keywords jinhe Name nahi hona chahiye (Strict List)
+    bad_keywords = [
+        'karachi', 'pakistan', 'lahore', 'education', 'skills', 'experience', 
+        'summary', 'profile', 'contact', 'address', 'about', 'communications', 
+        'closing', 'reporting', 'modeling', 'accounting', 'certified', 'associate', 
+        'manager', 'accountant', 'linkedin', 'email', 'phone', 'mobile', 'resume', 
+        'curriculum', 'page', 'objective', 'hobbies', 'projects', 'mehmoodabad', 
+        'gulshan', 'north', 'office', 'house', 'no.', 'flat', 'street', 'road', 
+        'sector', 'block', 'competencies', 'bookkeeper', 'qualified', 'expert'
+    ]
 
-    for ent in doc.ents:
-        if ent.label_ == "PERSON":
-            name = " ".join(ent.text.split())
-            name_low = name.lower()
-            
-            # Scoring Logic
-            score = 0
-            if 2 <= len(name.split()) <= 3: score += 50  # Name usually has 2-3 words
-            if name.isupper(): score += 10               # Many resumes have names in CAPS
-            if not any(word in name_low for word in blocklist): score += 30
-            if not any(char.isdigit() for char in name): score += 20
-            
-            # Penalties
-            if len(name) < 3 or len(name) > 30: score -= 100
-            if "@" in name or "http" in name: score -= 100
-            
-            candidates.append((name.title(), score))
+    # Shuru ki 15-20 lines scan karein
+    lines = [l.strip() for l in text.split('\n') if l.strip()][:20]
     
-    # Sort by highest score
-    candidates.sort(key=lambda x: x[1], reverse=True)
-    
-    if candidates and candidates[0][1] > 50:
-        return candidates[0][0]
-    
-    # Fallback: Agar AI fail ho jaye
-    lines = [l.strip() for l in text.split('\n') if l.strip()][:10]
+    best_candidate = "Check Document"
+    max_score = -100
+
     for line in lines:
-        if 2 <= len(line.split()) <= 3 and not any(char.isdigit() for char in line):
-            if not any(w in line.lower() for w in blocklist):
-                return line.title()
-                
-    return "Not Found"
+        cleaned = " ".join(line.split())
+        low_line = cleaned.lower()
+        score = 0
+        
+        # Validation Rules:
+        # A. Numbers ya @/http ho to seedha reject
+        if any(char.isdigit() for char in cleaned) or "@" in low_line or "http" in low_line:
+            continue
+            
+        # B. Words Count (Names usually have 2 to 4 words)
+        words = cleaned.split()
+        if 2 <= len(words) <= 4:
+            score += 50
+        else:
+            score -= 30
+            
+        # C. Keyword Penalty
+        if any(word in low_line for word in bad_keywords):
+            score -= 100
+            
+        # D. Length Check
+        if 4 <= len(cleaned) <= 35:
+            score += 20
+        else:
+            score -= 50
 
-def extract_info(uploaded_file):
+        # Agar is line ka score ab tak ka sabse behtar hai to save karein
+        if score > max_score and score > 0:
+            max_score = score
+            best_candidate = cleaned.title()
+                        
+    return best_candidate
+
+def process_file(uploaded_file):
     text = ""
     f_name = uploaded_file.name
     try:
@@ -76,34 +74,37 @@ def extract_info(uploaded_file):
             doc = docx.Document(uploaded_file)
             text = "\n".join([para.text for para in doc.paragraphs])
         
-        email = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
+        # Email Extraction
+        email_matches = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
+        
         return {
             "File Name": f_name,
-            "Name": score_and_get_name(text),
-            "Email": email[0] if email else "Not Found"
+            "Name": filter_and_get_best_name(text),
+            "Email": email_matches[0] if email_matches else "Not Found"
         }
     except:
         return {"File Name": f_name, "Name": "Error", "Email": "Error"}
 
-# --- UI ---
-files = st.file_uploader("Upload Resumes", accept_multiple_files=True)
+# --- UI Interface ---
+files = st.file_uploader("Upload Files (PDF/Word)", accept_multiple_files=True)
 
 if files:
-    with st.spinner('AI is calculating scores for names...'):
-        results = [extract_info(f) for f in files]
-        df = pd.DataFrame(results)
+    with st.spinner('KAFBOC System is filtering names...'):
+        data = [process_file(f) for f in files]
+        df = pd.DataFrame(data)
     
-    st.table(df)
+    st.subheader("📋 Extraction Result")
+    st.dataframe(df, use_container_width=True) # Dataframe view is clean
     
-    # Excel Download
+    # Excel formatting
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='KAFBOC_Data')
+        df.to_excel(writer, index=False, sheet_name='Data')
         workbook = writer.book
-        worksheet = writer.sheets['KAFBOC_Data']
-        header_fmt = workbook.add_format({'bold': True, 'bg_color': '#1F4E78', 'font_color': 'white', 'border': 1})
-        for i, col in enumerate(df.columns):
-            worksheet.write(0, i, col, header_fmt)
-        worksheet.set_column('A:C', 40)
+        worksheet = writer.sheets['Data']
+        fmt = workbook.add_format({'bold': True, 'bg_color': '#1F4E78', 'font_color': 'white', 'border': 1})
+        for i, val in enumerate(df.columns):
+            worksheet.write(0, i, val, fmt)
+        worksheet.set_column('A:C', 35)
 
-    st.download_button("📥 Download AI Scored Excel", output.getvalue(), "KAFBOC_AI_Data.xlsx")
+    st.download_button("📥 Download Final Excel Report", output.getvalue(), "KAFBOC_Final_Report.xlsx")
